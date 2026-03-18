@@ -1,86 +1,119 @@
 const express = require('express');
+const mysql = require('mysql');
 const cors = require('cors');
-const { ethers } = require('ethers');
-const db = require('./db.js'); 
-const abi = require('./abi.json'); 
-require('dotenv').config();
 
 const app = express();
 
-// --- 1. MIDDLEWARE ---
-// Allows Amrin's frontend to talk to your server
-app.use(cors());
+// --- MIDDLEWARE ---
 app.use(express.json());
+app.use(cors()); // This allows Amrin's laptop to talk to yours!
 
-// --- 2. BLOCKCHAIN SETUP ---
-// Connects your server to George's Ganache via Radmin IP
-const provider = new ethers.providers.JsonRpcProvider(process.env.RPC_URL);
-const wallet = new ethers.Wallet(process.env.PRIVATE_KEY, provider);
-const contract = new ethers.Contract(process.env.CONTRACT_ADDRESS, abi, wallet);
-
-// Test Blockchain Connection
-provider.getNetwork().then(net => {
-    console.log(`🔗 SUCCESS: Connected to George's Blockchain (Radmin IP: ${process.env.RPC_URL})`);
-}).catch(err => {
-    console.log("❌ BLOCKCHAIN ERROR: Could not connect to George. Is his Ganache Hostname set to his Radmin IP?");
+// --- DATABASE CONNECTION ---
+const db = mysql.createConnection({
+    host: 'localhost',
+    user: 'root',
+    password: '',
+    database: 'voting_system' // Make sure this matches your name in phpMyAdmin
 });
 
-// --- 3. LOGIN ROUTE (MySQL) ---
-app.post('/api/login', (req, res) => {
-    const { student_id, password } = req.body;
-    const sql = "SELECT * FROM users WHERE student_id = ?";
+db.connect((err) => {
+    if (err) {
+        console.error('❌ Error connecting to MySQL:', err.message);
+        return;
+    }
+    console.log('✅ Connected to MySQL Database (Sara's Backend).');
+});
+
+// --- CONNECTION TEST ROUTE ---
+// When Amrin types http://26.15.111.159:5000 in Chrome, she will see this!
+app.get('/', (req, res) => {
+    res.send("<h1>Backend Server is LIVE!</h1><p>Ready for Registration and Voting.</p>");
+});
+
+// --- PORTAL 1: VOTER REGISTRATION ---
+app.post('/register', (req, res) => {
+    const { email, password } = req.body;
+    console.log(`📝 Registration request for: ${email}`);
+
+    if (!email.endsWith('@mgits.ac.in')) {
+        return res.status(400).json({ message: 'Only @mgits.ac.in emails are allowed.' });
+    }
+
+    const query = "INSERT INTO users (email, password, has_voted) VALUES (?, ?, 0)";
+    db.query(query, [email, password], (err, result) => {
+        if (err) {
+            if (err.code === 'ER_DUP_ENTRY') {
+                return res.status(400).json({ message: 'User already exists.' });
+            }
+            return res.status(500).json({ error: err.message });
+        }
+        res.status(201).json({ message: 'User registered successfully!' });
+    });
+});
+
+// --- PORTAL 2: VOTING LOGIN ---
+app.post('/login', (req, res) => {
+    const { email, password } = req.body;
+    console.log(`🔑 Login attempt for: ${email}`);
+
+    const query = "SELECT * FROM users WHERE email = ? AND password = ?";
     
-    db.query(sql, [student_id], (err, results) => {
-        if (err) return res.status(500).json({ error: err.message });
+    db.query(query, [email, password], (err, results) => {
+        if (err) return res.status(500).json({ error: "Database error" });
         
-        // Plain text check (since you mentioned pass123)
-        if (results.length > 0 && password === results[0].password_hash) {
-            res.json({ 
-                message: "Login Successful!", 
-                student_id: results[0].student_id,
-                has_voted: results[0].has_voted 
+        if (results.length > 0) {
+            const user = results[0];
+            
+            // SECURITY CHECK: If user already voted, block them here!
+            if (user.has_voted === 1) {
+                console.log(`⛔ Access Denied: ${email} has already voted.`);
+                return res.status(403).json({ message: "Access Denied: You have already cast your vote." });
+            }
+
+            console.log(`🔓 Login Successful: ${email}`);
+            res.status(200).json({ 
+                message: "Login successful. Welcome to the Voting Portal.", 
+                user: { email: user.email } 
             });
         } else {
-            res.status(401).json({ message: "Invalid credentials" });
+            res.status(401).json({ message: "Invalid email or password." });
         }
     });
 });
 
-// --- 4. VOTING ROUTE (Blockchain + MySQL) ---
-app.post('/api/vote', async (req, res) => {
-    const { student_id, candidate_id } = req.body;
+// --- INTEGRATION ROUTE: MARK AS VOTED (The "Security Lock") ---
+app.post('/mark-voted', (req, res) => {
+    const { email } = req.body;
+    console.log(`🔒 LOCKING USER: ${email} has cast their vote.`);
 
-    try {
-        // Step A: Send transaction to George's Blockchain
-        console.log(`Processing vote for Candidate ${candidate_id}...`);
-        const tx = await contract.vote(candidate_id);
-        await tx.wait(); // Wait for block confirmation
-
-        // Step B: Update MySQL so they can't vote again
-        const sql = "UPDATE users SET has_voted = 1 WHERE student_id = ?";
-        db.query(sql, [student_id], (err, result) => {
-            if (err) throw err;
-            res.json({ 
-                message: "Vote recorded on Blockchain!", 
-                txHash: tx.hash 
-            });
-        });
-
-    } catch (error) {
-        console.error("Voting Error:", error);
-        res.status(500).json({ error: "Blockchain transaction failed" });
-    }
+    const query = "UPDATE users SET has_voted = 1 WHERE email = ?";
+    
+    db.query(query, [email], (err, result) => {
+        if (err) {
+            console.error("Update Error:", err);
+            return res.status(500).json({ error: "Failed to update voting status." });
+        }
+        res.status(200).json({ message: "Voter status updated successfully in MySQL." });
+    });
 });
 
-// --- 5. STATUS ROUTE ---
-app.get('/', (req, res) => {
-    res.send("Voting Backend is Live!");
-});
-
+// --- SERVER START ---
 const PORT = 5000;
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`\n*****************************************`);
-    console.log(`✅ SUCCESS: Server is running on Port ${PORT}`);
-    console.log(`📢 Tell Amrin to use your Radmin IP:5000`);
-    console.log(`*****************************************\n`);
+const MY_IP = '26.15.111.159'; // Your Radmin IP
+
+app.listen(PORT, MY_IP, () => {
+    console.log(`🚀 Sara's Backend Server running at http://${MY_IP}:${PORT}`);
+});         console.error("Update Error:", err);
+            return res.status(500).json({ error: "Failed to update voting status." });
+        }
+        res.status(200).json({ message: "Voter status updated successfully in MySQL." });
+    });
 });
+
+// --- SERVER START ---
+const PORT = 5000;
+const MY_IP = '26.15.111.159'; // Your Radmin IP
+
+app.listen(PORT, MY_IP, () => {
+    console.log(`🚀 Sara's Backend Server running at http://${MY_IP}:${PORT}`);
+ 
