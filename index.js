@@ -3,31 +3,38 @@ const mysql = require('mysql');
 const cors = require('cors');
 
 const app = express();
+
+// --- MIDDLEWARE ---
 app.use(express.json());
-app.use(cors());
+app.use(cors()); // This allows Amrin's laptop to talk to yours!
 
 // --- DATABASE CONNECTION ---
-// Make sure these credentials match your XAMPP phpMyAdmin settings
 const db = mysql.createConnection({
     host: 'localhost',
     user: 'root',
     password: '',
-    database: 'voting_system' // Change this to your actual database name
+    database: 'voting_system' // Make sure this matches your name in phpMyAdmin
 });
 
 db.connect((err) => {
     if (err) {
-        console.error('Error connecting to MySQL:', err);
+        console.error('❌ Error connecting to MySQL:', err.message);
         return;
     }
-    console.log('Connected to MySQL Database.');
+    console.log('✅ Connected to MySQL Database (Sara's Backend).');
 });
 
-// --- PORTAL 1: REGISTRATION ---
+// --- CONNECTION TEST ROUTE ---
+// When Amrin types http://26.15.111.159:5000 in Chrome, she will see this!
+app.get('/', (req, res) => {
+    res.send("<h1>Backend Server is LIVE!</h1><p>Ready for Registration and Voting.</p>");
+});
+
+// --- PORTAL 1: VOTER REGISTRATION ---
 app.post('/register', (req, res) => {
     const { email, password } = req.body;
+    console.log(`📝 Registration request for: ${email}`);
 
-    // Check if the email belongs to the college domain
     if (!email.endsWith('@mgits.ac.in')) {
         return res.status(400).json({ message: 'Only @mgits.ac.in emails are allowed.' });
     }
@@ -38,16 +45,17 @@ app.post('/register', (req, res) => {
             if (err.code === 'ER_DUP_ENTRY') {
                 return res.status(400).json({ message: 'User already exists.' });
             }
-            return res.status(500).json({ error: err });
+            return res.status(500).json({ error: err.message });
         }
         res.status(201).json({ message: 'User registered successfully!' });
     });
 });
 
 // --- PORTAL 2: VOTING LOGIN ---
-// Checks if credentials are correct AND if the user has already voted
 app.post('/login', (req, res) => {
     const { email, password } = req.body;
+    console.log(`🔑 Login attempt for: ${email}`);
+
     const query = "SELECT * FROM users WHERE email = ? AND password = ?";
     
     db.query(query, [email, password], (err, results) => {
@@ -56,11 +64,13 @@ app.post('/login', (req, res) => {
         if (results.length > 0) {
             const user = results[0];
             
-            // Check the voting status column
+            // SECURITY CHECK: If user already voted, block them here!
             if (user.has_voted === 1) {
+                console.log(`⛔ Access Denied: ${email} has already voted.`);
                 return res.status(403).json({ message: "Access Denied: You have already cast your vote." });
             }
 
+            console.log(`🔓 Login Successful: ${email}`);
             res.status(200).json({ 
                 message: "Login successful. Welcome to the Voting Portal.", 
                 user: { email: user.email } 
@@ -71,23 +81,39 @@ app.post('/login', (req, res) => {
     });
 });
 
-// --- INTEGRATION ROUTE: MARK AS VOTED ---
-// This will be called after the Blockchain transaction is successful
+// --- INTEGRATION ROUTE: MARK AS VOTED (The "Security Lock") ---
 app.post('/mark-voted', (req, res) => {
     const { email } = req.body;
+    console.log(`🔒 LOCKING USER: ${email} has cast their vote.`);
+
     const query = "UPDATE users SET has_voted = 1 WHERE email = ?";
     
     db.query(query, [email], (err, result) => {
-        if (err) return res.status(500).json({ error: "Failed to update voting status." });
+        if (err) {
+            console.error("Update Error:", err);
+            return res.status(500).json({ error: "Failed to update voting status." });
+        }
         res.status(200).json({ message: "Voter status updated successfully in MySQL." });
     });
 });
 
 // --- SERVER START ---
-// Using 5000 as the port. Use your Radmin IP here for Amrin to connect.
 const PORT = 5000;
-const MY_IP = '26.15.111.159'; // Your Radmin IP as a string
+const MY_IP = '26.15.111.159'; // Your Radmin IP
 
 app.listen(PORT, MY_IP, () => {
-    console.log(`Backend Server running at http://${MY_IP}:${PORT}`);
+    console.log(`🚀 Sara's Backend Server running at http://${MY_IP}:${PORT}`);
+});         console.error("Update Error:", err);
+            return res.status(500).json({ error: "Failed to update voting status." });
+        }
+        res.status(200).json({ message: "Voter status updated successfully in MySQL." });
+    });
 });
+
+// --- SERVER START ---
+const PORT = 5000;
+const MY_IP = '26.15.111.159'; // Your Radmin IP
+
+app.listen(PORT, MY_IP, () => {
+    console.log(`🚀 Sara's Backend Server running at http://${MY_IP}:${PORT}`);
+ 
